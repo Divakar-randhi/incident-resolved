@@ -4,10 +4,10 @@ import com.incident.resolver.entity.DailyIncident;
 import com.incident.resolver.entity.Person;
 import com.incident.resolver.repository.DailyIncidentRepository;
 import com.incident.resolver.repository.PersonRepository;
-import org.apache.poi.hssf.util.HSSFColor;
 import org.apache.poi.ss.usermodel.*;
 //import org.apache.poi.ss.util.IndexedColors;
 import org.apache.poi.xssf.usermodel.XSSFWorkbook;
+import org.apache.poi.openxml4j.util.ZipSecureFile;
 import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.stereotype.Service;
 
@@ -109,120 +109,123 @@ public class DataService {
         exportPivotedToExcel(pivotedData, personNames, summaries, grandTotalResolved, outputFilePath, (int) totalDays);
     }
 
-  private void exportPivotedToExcel(Map<LocalDate, Map<String, Integer>> pivotedData, List<String> personNames,
-                                  Map<String, Object[]> summaries, int grandTotal, String filePath, int totalDays) {
-    Workbook workbook = null;
-    boolean newFile = false;
+    private void exportPivotedToExcel(Map<LocalDate, Map<String, Integer>> pivotedData, List<String> personNames,
+                                      Map<String, Object[]> summaries, int grandTotal, String filePath, int totalDays) {
+        Workbook workbook = null;
+        boolean newFile = false;
 
-    try {
-        java.io.File file = new java.io.File(filePath);
-        if (!file.exists()) {
-            workbook = new XSSFWorkbook();  // New workbook
-            newFile = true;
-            System.out.println("Created new Excel file: " + filePath);
-        } else {
-            try (FileInputStream fis = new FileInputStream(filePath)) {
-                workbook = new XSSFWorkbook(fis);
-            }
-        }
+        // FIX: Lower ZIP bomb threshold for XLSX files
+        ZipSecureFile.setMinInflateRatio(0.002);  // Allow lower ratio to prevent "Zip bomb" error
 
-        // FIX: Remove existing "Report" sheet to avoid duplicate error
-        Sheet existingSheet = workbook.getSheet("Report");
-        if (existingSheet != null) {
-            int sheetIndex = workbook.getSheetIndex(existingSheet);
-            workbook.removeSheetAt(sheetIndex);
-            System.out.println("Removed existing 'Report' sheet to avoid duplicate.");
-        }
-
-        Sheet reportSheet = workbook.createSheet("Report");
-
-        // Headers
-        Row headerRow = reportSheet.createRow(0);
-        headerRow.createCell(0).setCellValue("Date");
-        CellStyle headerStyle = workbook.createCellStyle();
-        Font boldFont = workbook.createFont();
-        boldFont.setBold(true);
-        headerStyle.setFont(boldFont);
-        headerStyle.setFillForegroundColor(IndexedColors.LIGHT_BLUE.getIndex());
-        headerRow.getCell(0).setCellStyle(headerStyle);
-
-        int col = 1;
-        for (String name : personNames) {
-            Cell cell = headerRow.createCell(col++);
-            cell.setCellValue(name);
-            cell.setCellStyle(headerStyle);
-        }
-
-        // Data Rows
-        int rowNum = 1;
-        for (Map.Entry<LocalDate, Map<String, Integer>> dateEntry : pivotedData.entrySet()) {
-            LocalDate date = dateEntry.getKey();
-            Row dataRow = reportSheet.createRow(rowNum++);
-            dataRow.createCell(0).setCellValue(date.format(DateTimeFormatter.ofPattern("M/d/yyyy")));
-
-            int dataCol = 1;
-            for (String name : personNames) {
-                Integer count = dateEntry.getValue().get(name);
-                Cell countCell = dataRow.createCell(dataCol++);
-                countCell.setCellValue(count);
-                CellStyle style = workbook.createCellStyle();
-                if (count > 0) {
-                    style.setFillForegroundColor(IndexedColors.LIGHT_GREEN.getIndex());
-                } else {
-                    style.setFillForegroundColor(IndexedColors.LIGHT_BLUE.getIndex());
+        try {
+            java.io.File file = new java.io.File(filePath);
+            if (!file.exists()) {
+                workbook = new XSSFWorkbook();  // New workbook
+                newFile = true;
+                System.out.println("Created new Excel file: " + filePath);
+            } else {
+                try (FileInputStream fis = new FileInputStream(filePath)) {
+                    workbook = new XSSFWorkbook(fis);
                 }
-                countCell.setCellStyle(style);
             }
-        }
 
-        // Summary Rows
-        String[] summaryLabels = {"Total Incidents", "Zero Days (out of " + totalDays + ")", "Average per Working Day", "% of Grand Total"};
-        for (int s = 0; s < summaryLabels.length; s++) {
-            Row sumRow = reportSheet.createRow(rowNum++);
-            sumRow.createCell(0).setCellValue(summaryLabels[s]);
+            // Remove existing "Report" sheet to avoid duplicate error
+            Sheet existingSheet = workbook.getSheet("Report");
+            if (existingSheet != null) {
+                int sheetIndex = workbook.getSheetIndex(existingSheet);
+                workbook.removeSheetAt(sheetIndex);
+                System.out.println("Removed existing 'Report' sheet to avoid duplicate.");
+            }
 
-            int sumCol = 1;
+            Sheet reportSheet = workbook.createSheet("Report");
+
+            // Headers
+            Row headerRow = reportSheet.createRow(0);
+            headerRow.createCell(0).setCellValue("Date");
+            CellStyle headerStyle = workbook.createCellStyle();
+            Font boldFont = workbook.createFont();
+            boldFont.setBold(true);
+            headerStyle.setFont(boldFont);
+            headerStyle.setFillForegroundColor(IndexedColors.LIGHT_BLUE.getIndex());
+            headerRow.getCell(0).setCellStyle(headerStyle);
+
+            int col = 1;
             for (String name : personNames) {
-                Cell sumCell = sumRow.createCell(sumCol++);
-                Object[] vals = summaries.getOrDefault(name, new Object[]{0, 0, 0.0, 0.0});
-                switch (s) {
-                    case 0 -> sumCell.setCellValue((Integer) vals[0]);
-                    case 1 -> sumCell.setCellValue((Integer) vals[1]);
-                    case 2 -> sumCell.setCellValue(String.format("%.2f", (Double) vals[2]));
-                    case 3 -> sumCell.setCellValue(String.format("%.2f", (Double) vals[3]));
-                }
-                CellStyle sumStyle = workbook.createCellStyle();
-                sumStyle.setFont(boldFont);
-                sumStyle.setFillForegroundColor(IndexedColors.YELLOW.getIndex());
-                sumCell.setCellStyle(sumStyle);
+                Cell cell = headerRow.createCell(col++);
+                cell.setCellValue(name);
+                cell.setCellStyle(headerStyle);
             }
-        }
 
-        // Auto-size columns
-        for (int i = 0; i <= personNames.size(); i++) {
-            reportSheet.autoSizeColumn(i);
-        }
+            // Data Rows
+            int rowNum = 1;
+            for (Map.Entry<LocalDate, Map<String, Integer>> dateEntry : pivotedData.entrySet()) {
+                LocalDate date = dateEntry.getKey();
+                Row dataRow = reportSheet.createRow(rowNum++);
+                dataRow.createCell(0).setCellValue(date.format(DateTimeFormatter.ofPattern("M/d/yyyy")));
 
-        // Write to file
-        try (FileOutputStream fos = new FileOutputStream(filePath)) {
-            workbook.write(fos);
-        }
+                int dataCol = 1;
+                for (String name : personNames) {
+                    Integer count = dateEntry.getValue().get(name);
+                    Cell countCell = dataRow.createCell(dataCol++);
+                    countCell.setCellValue(count);
+                    CellStyle style = workbook.createCellStyle();
+                    if (count > 0) {
+                        style.setFillForegroundColor(IndexedColors.LIGHT_GREEN.getIndex());
+                    } else {
+                        style.setFillForegroundColor(IndexedColors.LIGHT_BLUE.getIndex());  // FIX: Red for 0
+                    }
+                    countCell.setCellStyle(style);
+                }
+            }
 
-        if (workbook != null) {
-            workbook.close();
-        }
-        System.out.println("Pivoted Report exported to " + filePath + " ('Report' sheet updated)!");
+            // Summary Rows
+            String[] summaryLabels = {"Total Incidents", "Zero Days (out of " + totalDays + ")", "Average per Working Day", "% of Grand Total"};
+            for (int s = 0; s < summaryLabels.length; s++) {
+                Row sumRow = reportSheet.createRow(rowNum++);
+                sumRow.createCell(0).setCellValue(summaryLabels[s]);
 
-    } catch (IOException e) {
-        System.err.println("Export error: " + e.getMessage());
-        if (workbook != null) {
-            try {
+                int sumCol = 1;
+                for (String name : personNames) {
+                    Cell sumCell = sumRow.createCell(sumCol++);
+                    Object[] vals = summaries.getOrDefault(name, new Object[]{0, 0, 0.0, 0.0});
+                    switch (s) {
+                        case 0 -> sumCell.setCellValue((Integer) vals[0]);
+                        case 1 -> sumCell.setCellValue((Integer) vals[1]);
+                        case 2 -> sumCell.setCellValue(String.format("%.2f", (Double) vals[2]));
+                        case 3 -> sumCell.setCellValue(String.format("%.2f", (Double) vals[3]));
+                    }
+                    CellStyle sumStyle = workbook.createCellStyle();
+                    sumStyle.setFont(boldFont);
+                    sumStyle.setFillForegroundColor(IndexedColors.YELLOW.getIndex());
+                    sumCell.setCellStyle(sumStyle);
+                }
+            }
+
+            // Auto-size columns
+            for (int i = 0; i <= personNames.size(); i++) {
+                reportSheet.autoSizeColumn(i);
+            }
+
+            // Write to file
+            try (FileOutputStream fos = new FileOutputStream(filePath)) {
+                workbook.write(fos);
+            }
+
+            if (workbook != null) {
                 workbook.close();
-            } catch (IOException closeEx) {
-                System.err.println("Failed to close workbook: " + closeEx.getMessage());
             }
+            System.out.println("Pivoted Report exported to " + filePath + " ('Report' sheet updated)!");
+
+        } catch (IOException e) {
+            System.err.println("Export error: " + e.getMessage());
+            if (workbook != null) {
+                try {
+                    workbook.close();
+                } catch (IOException closeEx) {
+                    System.err.println("Failed to close workbook: " + closeEx.getMessage());
+                }
+            }
+            throw new RuntimeException("Failed to export report: " + e.getMessage(), e);
         }
-        throw new RuntimeException("Failed to export report: " + e.getMessage(), e);
     }
-}
 }
